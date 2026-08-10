@@ -31,6 +31,12 @@ if [ -z "$PY" ]; then
   warn "python3 not found on PATH"
   exit 1
 fi
+# Resolve to the real interpreter. `command -v` under asdf/pyenv/mise hands back
+# a shim, and baking a shim into a service unit means the daemon silently
+# follows whatever the user switches their global python to later — and on most
+# setups the shim cannot even resolve without its version manager on PATH,
+# which the service PATH deliberately does not carry.
+PY="$("$PY" -c 'import sys; print(sys.executable)' 2>/dev/null || echo "$PY")"
 if ! "$PY" -c 'import tomllib' 2>/dev/null; then
   warn "python3 has no tomllib (needs 3.11+): the CI column works, but review_labels config is ignored"
 fi
