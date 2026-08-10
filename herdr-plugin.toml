@@ -1,0 +1,63 @@
+id = "firew0rks.ci-tokens"
+name = "ci-tokens"
+version = "0.1.0"
+# 0.7.5 is the first release with one-shot `[[startup]]` hooks, which is how the
+# background poller gets installed and started without a manual step after
+# `plugin install`. Everything else here works on 0.7.0.
+min_herdr_version = "0.7.5"
+platforms = ["linux", "macos"]
+description = "Show PR, CI and review-label status as sidebar tokens on herdr spaces and agent panes."
+
+# Install and start the poller under systemd/launchd, then stamp once from cache
+# so the sidebar is populated before the first poll. Idempotent: it rewrites the
+# service only when the rendered unit differs, which matters because startup
+# hooks re-fire on every live handoff and because `plugin install` relocates the
+# plugin root on each reinstall.
+[[startup]]
+command = ["bash", "install.sh", "--quiet"]
+
+# A newly created worktree or workspace has no tokens until the next poll, which
+# is up to poll_seconds away. These stamp it immediately *from cache* — the
+# sweep is told the cache never expires, so no hook ever spends a network call.
+# The poll loop keeps sole ownership of fetching.
+#
+# Deliberately not pane.agent_status_changed: it fires on every agent state
+# transition, CI status is uncorrelated with it, and a sweep per transition is a
+# stampede for no new information.
+[[events]]
+on = "worktree.created"
+command = ["bash", "hooks/refresh.sh"]
+
+[[events]]
+on = "workspace.created"
+command = ["bash", "hooks/refresh.sh"]
+
+[[events]]
+on = "pane.agent_detected"
+command = ["bash", "hooks/refresh.sh"]
+
+# Lets a user finish the install immediately instead of waiting for the next
+# herdr start to fire the startup hook.
+[[actions]]
+id = "install-service"
+title = "ci-tokens: install/restart the poller"
+contexts = ["pane", "workspace"]
+command = ["bash", "install.sh"]
+
+[[actions]]
+id = "sidebar-config"
+title = "ci-tokens: print sidebar config"
+contexts = ["pane", "workspace"]
+command = ["bash", "hooks/sidebar-config.sh"]
+
+[[actions]]
+id = "refresh"
+title = "ci-tokens: refresh now"
+contexts = ["pane", "workspace"]
+command = ["bash", "hooks/refresh.sh", "--fresh"]
+
+[[actions]]
+id = "status"
+title = "ci-tokens: service status"
+contexts = ["pane", "workspace"]
+command = ["bash", "hooks/service-status.sh"]

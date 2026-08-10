@@ -1,0 +1,33 @@
+# Preset for repos reviewed by an automated agent that applies `zealot:*` labels.
+# Copy to your plugin config dir:
+#
+#   cp presets/zealot.toml "$(herdr plugin config-dir firew0rks.ci-tokens)/config.toml"
+
+poll_seconds = 30
+cache_max_age_seconds = 120
+
+# First match wins, so order is the precedence: an in-flight review outranks the
+# verdict from the round before it.
+[[review_labels]]
+match = "zealot:reviewing"
+glyph = "●"
+
+[[review_labels]]
+match = "zealot:needs-fixes"
+glyph = "✗"
+
+[[review_labels]]
+match = "zealot:needs-polish"
+glyph = "◐"
+
+[[review_labels]]
+match = "zealot:clean"
+glyph = "✓"
+
+# The gate means "a reviewer has been here", whatever the verdict. Its absence
+# is the only honest way to say "queued": a PR with no verdict label and no gate
+# has not been picked up, while one with the gate and no verdict was looked at
+# and had nothing to say.
+[review_gate]
+label = "zealot:reviewed"
+glyph = "○"
