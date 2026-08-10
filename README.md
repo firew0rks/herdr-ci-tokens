@@ -81,7 +81,7 @@ glyph = "○"
 
 A poller asks `gh pr list` once per repo (not per worktree), derives the glyphs, and stamps them onto every space and agent pane with `herdr {workspace,pane} report-metadata --source ci-tokens`. Tokens carry a TTL longer than the poll interval, so they never blink out between passes.
 
-`worktree.created`, `workspace.created` and `pane.agent_detected` trigger an extra sweep that reads **only** from cache, so a new worktree is labelled the moment it appears without spending a network call. The poll loop keeps sole ownership of fetching.
+`worktree.created`, `workspace.created` and `pane.agent_detected` trigger an extra sweep, scoped to the workspace that fired the event and reading **only** from cache — so a new worktree lights up the moment it appears, in a fraction of a second, without spending a network call. The poll loop keeps sole ownership of fetching.
 
 Two design decisions worth knowing, because both are load-bearing:
 

@@ -24,6 +24,7 @@ Usage:
     ci_tokens.py --fresh         ignore cache (use on launch)
     ci_tokens.py --watch 30      loop forever, one pass every 30s
     ci_tokens.py --max-age 120   how stale the cached PR list may be, seconds
+    ci_tokens.py --workspace w7  stamp only this workspace and its panes
 """
 import argparse
 import json
@@ -267,10 +268,15 @@ def stamp(kind, target, values, ttl_ms):
     run(args)
 
 
-def sweep(max_age, ttl_ms, cfg):
+def sweep(max_age, ttl_ms, cfg, only=None):
     spaces = json.loads(run(["herdr", "workspace", "list"]) or '{"result":{"workspaces":[]}}')
     panes = json.loads(run(["herdr", "pane", "list"]) or '{"result":{"panes":[]}}')
     spaces = spaces["result"]["workspaces"]
+    # An event hook cares about the one surface that just appeared. Sweeping all
+    # of them costs a `git status` per checkout, which on a machine with a couple
+    # of dozen worktrees is seconds of work to answer a question about one.
+    if only:
+        spaces = [w for w in spaces if w["workspace_id"] == only]
 
     roots = {w["worktree"]["repo_root"] for w in spaces if w.get("worktree")}
     prs, unavailable = forge_status(sorted(roots), max_age, cfg)
@@ -307,6 +313,7 @@ def main():
     ap.add_argument("--watch", type=int, metavar="SECONDS")
     ap.add_argument("--max-age", type=int, help="cached PR list lifetime, seconds")
     ap.add_argument("--fresh", action="store_true", help="ignore the cache this pass")
+    ap.add_argument("--workspace", metavar="ID", help="stamp only this workspace and its panes")
     a = ap.parse_args()
 
     cfg = load_config()
@@ -315,7 +322,7 @@ def main():
     # The TTL has to outlive the gap between passes or tokens blink out between them.
     interval = watch or cfg["poll_seconds"]
     while True:
-        sweep(0 if a.fresh else max_age, (interval + 60) * 1000, cfg)
+        sweep(0 if a.fresh else max_age, (interval + 60) * 1000, cfg, a.workspace)
         if watch is None:
             return
         time.sleep(watch)
