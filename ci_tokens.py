@@ -73,6 +73,60 @@ def state_dir():
         "~/.local/state/herdr-ci-tokens")
 
 
+def parse_toml(text):
+    """Enough TOML for this plugin's config, for pythons without tomllib.
+
+    Handles `key = value` (string, int, bool), `[table]`, `[[table array]]` and
+    `#` comments. Nothing else — it is not a TOML implementation and does not
+    try to be.
+
+    It exists because macOS ships python 3.9 and tomllib landed in 3.11, so the
+    default Mac install would otherwise read its config, find no parser, and
+    silently drop the review column. A config file that quietly does nothing is
+    a worse failure than one that is parsed a little literally.
+    """
+    data, section = {}, None
+
+    def target():
+        return data if section is None else section
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[["):
+            name = line[2:line.index("]]")].strip()
+            section = {}
+            data.setdefault(name, []).append(section)
+            continue
+        if line.startswith("["):
+            name = line[1:line.index("]")].strip()
+            section = data.setdefault(name, {})
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        target()[key.strip()] = _coerce(value.strip())
+    return data
+
+
+def _coerce(value):
+    """A quoted string keeps everything up to its closing quote — including a
+    `#`, which would otherwise read as the start of a comment and truncate a
+    glyph. Unquoted values are cut at the first `#`."""
+    if value[:1] in ("'", '"'):
+        quote = value[0]
+        end = value.find(quote, 1)
+        return value[1:end] if end > 0 else value[1:]
+    value = value.split("#", 1)[0].strip()
+    if value in ("true", "false"):
+        return value == "true"
+    try:
+        return int(value)
+    except ValueError:
+        return value
+
+
 def load_config():
     """Config is optional. Absent, unreadable or unparseable all mean defaults.
 
@@ -82,17 +136,15 @@ def load_config():
     path = os.path.join(config_dir(), "config.toml")
     try:
         import tomllib
+        loads = lambda text: tomllib.loads(text)
     except ImportError:
-        if os.path.exists(path):
-            log(f"python {sys.version_info.major}.{sys.version_info.minor} has no tomllib "
-                f"(needs 3.11+); ignoring {path} and running CI-only")
-        return dict(DEFAULTS, review_labels=[], review_gate=None)
+        loads = parse_toml
     try:
-        with open(path, "rb") as f:
-            raw = tomllib.load(f)
+        with open(path, encoding="utf-8") as f:
+            raw = loads(f.read())
     except OSError:
         raw = {}
-    except ValueError as e:
+    except (ValueError, IndexError) as e:
         log(f"unparseable {path}: {e}; running with defaults")
         raw = {}
     gate = raw.get("review_gate") or None

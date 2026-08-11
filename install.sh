@@ -37,8 +37,19 @@ fi
 # setups the shim cannot even resolve without its version manager on PATH,
 # which the service PATH deliberately does not carry.
 PY="$("$PY" -c 'import sys; print(sys.executable)' 2>/dev/null || echo "$PY")"
+# Prefer an interpreter with a real TOML parser. The plugin falls back to its
+# own small parser when tomllib is missing (macOS ships python 3.9), so this is
+# a preference and not a requirement — but stdlib parsing is stricter, and a
+# Mac with Homebrew python usually has one available under a versioned name
+# even when plain `python3` is Apple's.
 if ! "$PY" -c 'import tomllib' 2>/dev/null; then
-  warn "python3 has no tomllib (needs 3.11+): the CI column works, but review_labels config is ignored"
+  for candidate in python3.14 python3.13 python3.12 python3.11; do
+    cand_path="$(command -v "$candidate" 2>/dev/null || true)"
+    if [ -n "$cand_path" ] && "$cand_path" -c 'import tomllib' 2>/dev/null; then
+      PY="$("$cand_path" -c 'import sys; print(sys.executable)')"
+      break
+    fi
+  done
 fi
 command -v gh >/dev/null 2>&1 || warn "gh not found on PATH; no GitHub repo will report status"
 gh auth status >/dev/null 2>&1 || warn "gh is not authenticated; run 'gh auth login'"

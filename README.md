@@ -34,7 +34,7 @@ herdr plugin action invoke sidebar-config --plugin firew0rks.ci-tokens
 
 Copy its output into `~/.config/herdr/config.toml`. Until you do, the poller runs perfectly and displays nothing.
 
-Requirements: herdr 0.7.5+, Python 3.9+ (3.11+ for review labels), and [`gh`](https://cli.github.com) authenticated.
+Requirements: herdr 0.7.5+, Python 3.8+, and [`gh`](https://cli.github.com) authenticated. No third-party packages; config parsing falls back to a built-in parser on pythons without `tomllib`, so stock macOS python works.
 
 ## Tokens
 
