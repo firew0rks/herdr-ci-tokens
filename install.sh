@@ -4,8 +4,7 @@
 # Run directly after `herdr plugin install`/`plugin link`, or let the plugin's
 # [[startup]] hook run it with --quiet. Idempotent either way: the service is
 # rewritten only when the rendered unit actually differs, which matters because
-# startup hooks re-fire on every live handoff and because `plugin install`
-# relocates the plugin root on every reinstall.
+# startup hooks re-fire on every live handoff.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,6 +61,16 @@ POLL="$(HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" "$PY" -c \
   "import sys; sys.path.insert(0,'$ROOT'); import ci_tokens; print(ci_tokens.load_config()['poll_seconds'])" \
   2>/dev/null || echo 30)"
 
+# `plugin install` replaces the sources in place under a root named for the
+# source spec, not the commit, so an upgrade renders a byte-identical unit and
+# the check below would call it current and leave the daemon running the code
+# it loaded at boot — an update that silently does nothing. Stamping the
+# sources into the unit is what makes "the code changed" visible to a
+# comparison that only ever looks at the unit. cksum because it is POSIX;
+# sha256sum is not on macOS and shasum is not on every Linux.
+CODE_STAMP="$(cat "$ROOT"/ci_tokens.py "$ROOT"/proc.py "$ROOT"/forge/*.py 2>/dev/null |
+  cksum | cut -d' ' -f1)"
+
 # --- migrate off a hand-rolled predecessor -----------------------------------
 # Two pollers would fight over the same --source tokens, each clearing what the
 # other set.
@@ -74,6 +83,7 @@ fi
 install_systemd() {
   local unit="$HOME/.config/systemd/user/herdr-ci-tokens.service" rendered
   rendered="$(cat <<UNIT
+# source $CODE_STAMP — rendered by install.sh, compared not read
 [Unit]
 Description=Stamp herdr spaces and agent panes with git/CI/review status tokens
 After=default.target
@@ -113,6 +123,7 @@ install_launchd() {
   rendered="$(cat <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- source $CODE_STAMP — rendered by install.sh, compared not read -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$label</string>
