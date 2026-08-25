@@ -79,13 +79,15 @@ glyph = "○"
 
 ## How it works
 
-A poller asks `gh pr list` once per repo (not per worktree), derives the glyphs, and stamps them onto every space and agent pane with `herdr {workspace,pane} report-metadata --source ci-tokens`. Tokens carry a TTL longer than the poll interval, so they never blink out between passes.
+A poller asks `gh pr list` once per repo (not per worktree), fetches CI status for the branches you have checked out, derives the glyphs, and stamps them onto every space and agent pane with `herdr {workspace,pane} report-metadata --source ci-tokens`. Tokens carry a TTL longer than the poll interval, so they never blink out between passes.
 
 `worktree.created`, `workspace.created` and `pane.agent_detected` trigger an extra sweep, scoped to the workspace that fired the event and reading **only** from cache — so a new worktree lights up the moment it appears, in a fraction of a second, without spending a network call. The poll loop keeps sole ownership of fetching.
 
-Two design decisions worth knowing, because both are load-bearing:
+Three design decisions worth knowing, because all three are load-bearing:
 
 **A failed fetch is not an empty one.** The cache keeps the last good answer *and its timestamp* when the forge cannot be reached, so the next pass retries immediately rather than caching the failure. Without this, one flaky `gh` call blanks every row in the sidebar.
+
+**Check status is fetched per watched branch, not per open PR.** The PR *lists* cover the whole repo — scoping those would make a branch with no worktree today read as having no PR tomorrow — but a PR's check rollup is the expensive field, and it is only ever shown for a branch someone has open. Asking for the rollup across the whole open list makes `gh` send one GraphQL page covering every open PR; past ~50 PRs GitHub answers `504` instead, and the sidebar freezes on stale data for as long as the backlog stays that size. Fetching it per branch makes the cost track your worktree count rather than the repo's age. A rollup that fails leaves that one PR's CI glyph blank — never green — and is retried on the next pass.
 
 **The cache holds facts, not glyphs.** Glyphs are re-derived every pass, so a CI transition shows up as soon as the data does, and a config edit lands on the very next sweep.
 
@@ -93,7 +95,7 @@ CI status is worst-wins over an allow-list: `SUCCESS`, `NEUTRAL` and `SKIPPED` p
 
 ## Other forges
 
-GitHub only, today. The forge boundary is two functions — `supports(root)` and `fetch(root)` returning normalised records — in `forge/`. Everything downstream is forge-agnostic already, so a GitLab or Azure adapter is one file plus a `supports()` clause. PRs welcome.
+GitHub only, today. The forge boundary is two functions — `supports(root)` and `fetch(root, branches)` returning normalised records — in `forge/`. Everything downstream is forge-agnostic already, so a GitLab or Azure adapter is one file plus a `supports()` clause. PRs welcome.
 
 ## Troubleshooting
 

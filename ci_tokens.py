@@ -43,7 +43,7 @@ SOURCE = "ci-tokens"
 # The cache stores normalised records, so a change to their shape — or to what
 # normalising them means — has to invalidate it. Bumping this is cheaper than a
 # migration and the only cost is one refetch.
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 
 # Glyphs alone can't say which column they belong to, so $status holds both in
 # fixed order — CI then review — and pads an absent one rather than dropping it.
@@ -170,6 +170,9 @@ def ci_glyph(checks):
     rather than silently reading green, and an empty conclusion means the check
     has not concluded yet — pending, not pass.
     """
+    # Also the "not known" case: None from a branch whose status was never
+    # asked for, or whose fetch failed. No glyph is the only honest answer to
+    # that, and it is emphatically not the same as no checks having run.
     if not checks:
         return ""
     failed = pending = 0
@@ -255,7 +258,20 @@ def save_cache(cache):
         log(f"cache write failed: {e}")
 
 
-def forge_status(roots, max_age, cfg):
+def covers(entry, branches, now, max_age):
+    """Is this cache entry young enough, and about the branches being asked about?
+
+    Age alone stopped being enough once the fetch got scoped to branches: an
+    entry can be seconds old and still know nothing about a worktree created
+    just after it was written. Without the second half, that worktree's row
+    would sit glyph-less until the entry expired.
+    """
+    if now - entry.get("at", 0) >= max_age:
+        return False
+    return set(branches) <= set(entry.get("data", {}).get("checked") or [])
+
+
+def forge_status(branches_by_root, max_age, cfg):
     """({repo_root: {branch: tokens}}, unavailable_roots), refetching only aged-out entries.
 
     A failed fetch keeps the previous entry — its data *and* its timestamp — so
@@ -273,16 +289,19 @@ def forge_status(roots, max_age, cfg):
     shows up on the very next one.
     """
     cache, now, unavailable = load_cache(), time.time(), set()
-    for root in roots:
+    for root, branches in sorted(branches_by_root.items()):
         entry = cache.get(root)
-        if entry and now - entry.get("at", 0) < max_age:
+        if entry and covers(entry, branches, now, max_age):
             continue
         adapter = forge.adapter_for(root)
         if not adapter:
+            # A repo with no forge has answered for every branch: no PRs. Saying
+            # so keeps it out of the refetch path instead of re-deciding it has
+            # no adapter on every single pass.
             cache[root] = {"at": now, "version": CACHE_VERSION,
-                           "data": {"open": [], "merged": []}}
+                           "data": {"open": [], "merged": [], "checked": sorted(branches)}}
             continue
-        data = adapter.fetch(root)
+        data = adapter.fetch(root, branches)
         if data is None:
             if entry:
                 log(f"fetch failed for {root}; serving cache from "
@@ -293,10 +312,11 @@ def forge_status(roots, max_age, cfg):
             continue
         cache[root] = {"at": now, "version": CACHE_VERSION, "data": data}
     save_cache(cache)
-    for root in roots:
+    for root in branches_by_root:
         if root not in cache:
             unavailable.add(root)
-    return ({r: derive(cache.get(r, {}).get("data", {}), cfg) for r in roots}, unavailable)
+    return ({r: derive(cache.get(r, {}).get("data", {}), cfg) for r in branches_by_root},
+            unavailable)
 
 
 def git_facts(path):
@@ -331,11 +351,23 @@ def sweep(max_age, ttl_ms, cfg, only=None):
     if only:
         spaces = [w for w in spaces if w["workspace_id"] == only]
 
-    roots = {w["worktree"]["repo_root"] for w in spaces if w.get("worktree")}
-    prs, unavailable = forge_status(sorted(roots), max_age, cfg)
+    # One git call per distinct checkout, shared by the space and every pane in
+    # it — and read *before* the forge call, which has to be told which branches
+    # anyone is looking at so it can skip fetching status for the ones nobody is.
+    facts, branches_by_root = {}, {}
+    for w in spaces:
+        wt = w.get("worktree")
+        if not wt:
+            continue
+        path = wt["checkout_path"]
+        if path not in facts:
+            facts[path] = git_facts(path)
+        if facts[path]:
+            branches_by_root.setdefault(wt["repo_root"], set()).add(facts[path][0])
 
-    # One git call per distinct checkout, shared by the space and every pane in it.
-    facts, by_path = {}, {}
+    prs, unavailable = forge_status(branches_by_root, max_age, cfg)
+
+    by_path = {}
     for w in spaces:
         wt = w.get("worktree")
         if not wt:
@@ -345,8 +377,6 @@ def sweep(max_age, ttl_ms, cfg, only=None):
         if wt["repo_root"] in unavailable:
             continue
         path = wt["checkout_path"]
-        if path not in facts:
-            facts[path] = git_facts(path)
         got = facts[path]
         if not got:
             continue
