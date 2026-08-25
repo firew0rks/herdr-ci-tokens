@@ -40,9 +40,10 @@ from proc import log, run
 TOKENS = ("branch", "git", "pr", "ci", "review", "status", "merged", "conflict")
 SOURCE = "ci-tokens"
 
-# The cache stores normalised records, so a shape change has to invalidate it.
-# Bumping this is cheaper than a migration and the only cost is one refetch.
-CACHE_VERSION = 2
+# The cache stores normalised records, so a change to their shape — or to what
+# normalising them means — has to invalidate it. Bumping this is cheaper than a
+# migration and the only cost is one refetch.
+CACHE_VERSION = 3
 
 # Glyphs alone can't say which column they belong to, so $status holds both in
 # fixed order — CI then review — and pads an absent one rather than dropping it.

@@ -47,10 +47,32 @@ def _open_pr(pr):
         "number": pr["number"],
         "branch": pr["headRefName"],
         "draft": bool(pr.get("isDraft")),
-        # Checks report `conclusion`; older commit statuses report `state`. An
-        # entry carrying neither has not concluded, which is pending, not pass.
-        "checks": [(c.get("conclusion") or c.get("state") or "").upper()
-                   for c in pr.get("statusCheckRollup") or []],
+        "checks": _latest_checks(pr.get("statusCheckRollup") or []),
         "conflicting": pr.get("mergeable") == "CONFLICTING",
         "labels": [l["name"] for l in pr.get("labels") or [] if "name" in l],
     }
+
+
+def _latest_checks(rollup):
+    """One conclusion per check, because the rollup keeps the superseded runs.
+
+    A re-run does not replace its predecessor: both rows come back for the same
+    commit, so a cancelled first attempt would pin a PR red forever while the
+    web UI and `gh pr checks` — which both collapse by name — read it green.
+
+    The key is `gh`'s: the context for a commit status, name *plus workflow* for
+    a check run, since two workflows may legitimately define the same job name
+    and collapsing those together would hide one of them. Newest start wins,
+    completion breaking a tie; the timestamps are ISO-8601 in UTC, so comparing
+    them as strings is comparing them chronologically.
+    """
+    latest = {}
+    for c in rollup:
+        key = c.get("context") or (c.get("name"), c.get("workflowName"))
+        at = (c.get("startedAt") or c.get("createdAt") or "", c.get("completedAt") or "")
+        # Checks report `conclusion`; older commit statuses report `state`. An
+        # entry carrying neither has not concluded, which is pending, not pass.
+        if key in latest and at < latest[key][0]:
+            continue
+        latest[key] = (at, (c.get("conclusion") or c.get("state") or "").upper())
+    return [concl for _, concl in latest.values()]
