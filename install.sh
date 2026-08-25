@@ -54,7 +54,28 @@ command -v gh >/dev/null 2>&1 || warn "gh not found on PATH; no GitHub repo will
 gh auth status >/dev/null 2>&1 || warn "gh is not authenticated; run 'gh auth login'"
 
 CONFIG_DIR="${HERDR_PLUGIN_CONFIG_DIR:-$(herdr plugin config-dir firew0rks.ci-tokens 2>/dev/null || echo "$HOME/.config/herdr-ci-tokens")}"
-STATE_DIR="${HERDR_PLUGIN_STATE_DIR:-$HOME/.local/state/herdr-ci-tokens}"
+# There is no `herdr plugin state-dir` to mirror the config-dir lookup above, so
+# an install that does not inherit HERDR_PLUGIN_STATE_DIR — someone running this
+# by hand, or the install-service action — would drop straight to the default and
+# silently relocate the state of an already-installed plugin. The daemon then
+# writes a cache herdr's own install will never read again, which costs a full
+# refetch and strands the old directory. Whatever is already installed wins over
+# the default; only a genuinely fresh install falls through to it.
+installed_state_dir() {
+  local unit="$HOME/.config/systemd/user/herdr-ci-tokens.service"
+  local plist="$HOME/Library/LaunchAgents/com.firew0rks.herdr-ci-tokens.plist"
+  local found=""
+  if [ -f "$unit" ]; then
+    found="$(sed -n 's/^Environment=HERDR_PLUGIN_STATE_DIR=//p' "$unit" | head -1)"
+  fi
+  if [ -z "$found" ] && [ -f "$plist" ]; then
+    found="$(sed -n 's:.*<key>HERDR_PLUGIN_STATE_DIR</key><string>\(.*\)</string>.*:\1:p' \
+      "$plist" | head -1)"
+  fi
+  printf '%s' "$found"
+}
+STATE_DIR="${HERDR_PLUGIN_STATE_DIR:-$(installed_state_dir)}"
+STATE_DIR="${STATE_DIR:-$HOME/.local/state/herdr-ci-tokens}"
 mkdir -p "$CONFIG_DIR" "$STATE_DIR"
 
 POLL="$(HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" "$PY" -c \
