@@ -22,8 +22,46 @@ if [ -z "$HERDR_BIN" ]; then
   warn "herdr not found on PATH; install it first"
   exit 1
 fi
-BIN_DIR="$(dirname "$HERDR_BIN")"
-SERVICE_PATH="$BIN_DIR:/usr/local/bin:/usr/bin:/bin"
+
+# A service manager boots with a minimal PATH, and this script has to pin every
+# binary the daemon execs into the unit it renders. The lookup cannot rely on
+# PATH either: the [[startup]] hook re-runs this with the same stripped
+# environment the daemon gets, so a plain `command -v` would silently re-render
+# a unit without the binary it had yesterday. Hence the fallback sweep over the
+# places package managers actually install to.
+tool_dir() {
+  local exe="$1" found cand
+  found="$(command -v "$exe" 2>/dev/null || true)"
+  if [ -z "$found" ]; then
+    for cand in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin" \
+                /home/linuxbrew/.linuxbrew/bin "$HOME/.linuxbrew/bin" \
+                /snap/bin /usr/bin /bin; do
+      if [ -x "$cand/$exe" ]; then found="$cand/$exe"; break; fi
+    done
+  fi
+  [ -n "$found" ] || return 0
+  dirname "$found"
+}
+
+path_add() {
+  [ -n "${1:-}" ] || return 0
+  case ":$SERVICE_PATH:" in *":$1:"*) return 0 ;; esac
+  SERVICE_PATH="${SERVICE_PATH:+$SERVICE_PATH:}$1"
+}
+
+# The daemon execs three things: herdr to stamp, gh to ask the forge, git to
+# read the checkout. herdr's own directory covers only the first — Homebrew
+# keeps its binary in the Cellar and symlinks just that name into the prefix, so
+# a unit pinned to it has no gh at all, and the daemon then starts, polls, and
+# fails every fetch with ENOENT while the sidebar stays blank.
+SERVICE_PATH=""
+path_add "$(dirname "$HERDR_BIN")"
+GH_DIR="$(tool_dir gh)"
+path_add "$GH_DIR"
+path_add "$(tool_dir git)"
+path_add /usr/local/bin
+path_add /usr/bin
+path_add /bin
 
 PY="$(command -v python3 || true)"
 if [ -z "$PY" ]; then
@@ -50,8 +88,11 @@ if ! "$PY" -c 'import tomllib' 2>/dev/null; then
     fi
   done
 fi
-command -v gh >/dev/null 2>&1 || warn "gh not found on PATH; no GitHub repo will report status"
-gh auth status >/dev/null 2>&1 || warn "gh is not authenticated; run 'gh auth login'"
+if [ -z "$GH_DIR" ]; then
+  warn "gh not found; no GitHub repo will report status"
+elif ! PATH="$SERVICE_PATH" gh auth status >/dev/null 2>&1; then
+  warn "gh is not authenticated; run 'gh auth login'"
+fi
 
 CONFIG_DIR="${HERDR_PLUGIN_CONFIG_DIR:-$(herdr plugin config-dir firew0rks.ci-tokens 2>/dev/null || echo "$HOME/.config/herdr-ci-tokens")}"
 # There is no `herdr plugin state-dir` to mirror the config-dir lookup above, so
