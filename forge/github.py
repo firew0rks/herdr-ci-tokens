@@ -66,7 +66,7 @@ def fetch(root, branches):
 
 
 def _add_checks(root, prs):
-    """Fill in `checks` on each PR, concurrently. Returns the branches that failed.
+    """Fill in `checks` and `merge` on each PR, concurrently. Returns the branches that failed.
 
     A failed rollup leaves `checks` None, which renders as no glyph — an honest
     "not known" rather than a false pass — and drops its branch from the covered
@@ -81,30 +81,55 @@ def _add_checks(root, prs):
     if not prs:
         return set()
     with ThreadPoolExecutor(max_workers=ROLLUP_WORKERS) as pool:
-        rollups = list(pool.map(lambda pr: _rollup(root, pr["number"]), prs))
+        views = list(pool.map(lambda pr: _view(root, pr["number"]), prs))
     failed = set()
-    for pr, rollup in zip(prs, rollups):
-        if rollup is None:
+    for pr, view in zip(prs, views):
+        if view is None:
             failed.add(pr["branch"])
         else:
-            pr["checks"] = _latest_checks(rollup)
+            pr["checks"] = _latest_checks(view.get("statusCheckRollup") or [])
+            pr["merge"] = _merge(view)
     return failed
 
 
-def _rollup(root, number):
-    """One PR's check rollup, or None if it could not be fetched.
+def _view(root, number):
+    """One PR's check rollup and merge state, or None if it could not be fetched.
 
-    Same node shape `gh pr list --json statusCheckRollup` returns, so
-    `_latest_checks` reads it unchanged.
+    Merge state rides along here rather than on the open list because it costs
+    the same as the rollup: asked for across a 200-PR list, GitHub answers 502.
     """
-    out = run(["gh", "pr", "view", str(number), "--json", "statusCheckRollup"], cwd=root)
+    out = run(["gh", "pr", "view", str(number), "--json",
+               "statusCheckRollup,mergeStateStatus,reviewDecision"], cwd=root)
     if out is None:
         return None
     try:
-        return json.loads(out or "{}").get("statusCheckRollup") or []
+        return json.loads(out or "{}")
     except ValueError as e:
-        log(f"unparseable rollup for {root}#{number}: {e}")
+        log(f"unparseable view for {root}#{number}: {e}")
         return None
+
+
+def _merge(view):
+    """GitHub's verdict on whether the merge button works, normalised.
+
+    `mergeStateStatus` already folds in every rule the branch enforces —
+    required approvals, code-owner review, required checks — so this is the
+    forge's own answer, not one re-derived from labels. BLOCKED is split by
+    `reviewDecision` because "waiting on a reviewer" and "waiting on a check"
+    are different people's move. UNSTABLE is mergeable: only non-required
+    checks are red. UNKNOWN is GitHub still computing, and reads as not known.
+    """
+    state = view.get("mergeStateStatus")
+    if state in ("CLEAN", "HAS_HOOKS", "UNSTABLE"):
+        return "ready"
+    if state == "BEHIND":
+        return "behind"
+    if state == "DIRTY":
+        return "conflict"
+    if state == "BLOCKED":
+        return {"REVIEW_REQUIRED": "review",
+                "CHANGES_REQUESTED": "changes"}.get(view.get("reviewDecision"), "blocked")
+    return None
 
 
 def _open_pr(pr):
@@ -115,6 +140,7 @@ def _open_pr(pr):
         # Stays None for every PR nobody has checked out, and for one whose
         # rollup failed. Both mean "not known", which derives to no glyph.
         "checks": None,
+        "merge": None,
         "conflicting": pr.get("mergeable") == "CONFLICTING",
         "labels": [l["name"] for l in pr.get("labels") or [] if "name" in l],
     }

@@ -29,12 +29,18 @@ An adapter is a module exposing two functions:
 Records are normalised by the adapter, so glyph derivation never learns a
 forge's vocabulary:
 
-    open:   {number, branch, draft, checks, conflicting, labels}
+    open:   {number, branch, draft, checks, merge, conflicting, labels}
               checks       list of conclusion strings, upper-cased; "" for a
                            check that has not concluded yet. None means not
                            known — the branch was not asked about, or its
                            status could not be fetched — and derives to no
                            glyph, never to a passing one.
+              merge        whether the forge would let it merge now: "ready",
+                           "review" (awaiting a required approval), "changes"
+                           (changes requested), "behind", "conflict", or
+                           "blocked" (anything else, usually a required check).
+                           None means not known, for the same reasons as
+                           `checks`.
               conflicting  bool
               labels       list of label-name strings
     merged: {number, branch}
