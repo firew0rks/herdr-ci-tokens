@@ -9,9 +9,10 @@ Tokens, on both spaces and agent panes:
     $branch    fix/careteam-knowledgebase-gap
     $git       ~2 ↑1   dirty files, unpushed commits; absent when clean
     $pr        #7080   draft PRs are bracketed: [#6110]
-    $status    ✓ ◐     CI then review, space-separated, padded — see NONE below
+    $status    ✓ ◐ ○   CI, review, merge, space-separated, padded — see NONE below
     $ci        ✓ pass  ● running  ✗ fail
     $review    whatever your review_labels config says; empty when unconfigured
+    $merge     ✓ ready  ○ needs approval  ✗ changes requested  ↓ behind  ■ blocked
     $merged    ⋎ the PR landed — this worktree is cleanup now
     $conflict  ⚠ only when the branch actually conflicts
 
@@ -37,16 +38,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import forge
 from proc import log, run
 
-TOKENS = ("branch", "git", "pr", "ci", "review", "status", "merged", "conflict")
+TOKENS = ("branch", "git", "pr", "ci", "review", "merge", "status", "merged", "conflict")
 SOURCE = "ci-tokens"
 
 # The cache stores normalised records, so a change to their shape — or to what
 # normalising them means — has to invalidate it. Bumping this is cheaper than a
 # migration and the only cost is one refetch.
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 
 # Glyphs alone can't say which column they belong to, so $status holds both in
-# fixed order — CI then review — and pads an absent one rather than dropping it.
+# fixed order — CI, review, merge — and pads an absent one rather than dropping it.
 # Position is the label. The individual $ci/$review tokens stay available, but
 # they collapse when empty and shift everything left, which is exactly what
 # makes them unreadable as bare symbols.
@@ -57,6 +58,10 @@ CACHE_VERSION = 4
 # for. U+2800 renders blank, occupies one cell, and survives the trim.
 NONE = "⠀"
 GAP = " "
+
+# Conflict reads as a failure here; the separate $conflict token says which kind.
+MERGE = {"ready": "✓", "review": "○", "changes": "✗", "behind": "↓",
+         "conflict": "✗", "blocked": "■"}
 
 # The PR landed: this worktree is now cleanup, not work in flight.
 MERGED = "⋎"
@@ -217,14 +222,16 @@ def derive(data, cfg):
     for pr in data.get("open", []):
         ci = ci_glyph(pr.get("checks"))
         review = review_glyph(pr.get("labels"), rules, gate)
+        merge = MERGE.get(pr.get("merge"), "")
         n = f"#{pr['number']}"
-        # With no review config there is no second column, so no pad — a lone
-        # CI glyph should not sit next to a blank cell forever.
-        cols = (ci, review) if reviewing else (ci,)
+        # With no review config there is no review column, so no pad — a glyph
+        # should not sit next to a blank cell forever.
+        cols = (ci, review, merge) if reviewing else (ci, merge)
         out[pr["branch"]] = {
             "pr": f"[{n}]" if pr.get("draft") else n,
             "ci": ci,
             "review": review,
+            "merge": merge,
             "status": GAP.join(g or NONE for g in cols),
             "conflict": "⚠" if pr.get("conflicting") else "",
         }

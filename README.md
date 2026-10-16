@@ -3,14 +3,15 @@
 Show PR, CI and review status for every worktree in your [herdr](https://github.com/persiyanov/herdr) sidebar.
 
 ```
-✓ ✓  project-indi          ~2 ↑1  #8090
-● ○  fix-timeline-sort            #8061
-✗ ✗  feat-village-notify   ~7     [#8102]  ⚠
-     main
-⋎    fix-grant-type               #7985
+✓ ✓ ✓  project-indi          ~2 ↑1  #8090
+✓ ✓ ○  fix-care-team-sweep          #8094
+● ○ ■  fix-timeline-sort            #8061
+✗ ✗ ✗  feat-village-notify   ~7     [#8102]  ⚠
+       main
+⋎      fix-grant-type               #7985
 ```
 
-Reading the columns: CI passed and review is clean · CI running, review not picked up yet · CI failed and review wants fixes, on a draft PR with a merge conflict · no PR · PR landed, this worktree is cleanup now.
+Reading the columns (CI, review, merge): ready to merge · green and reviewed, but still waiting on a required approval · CI running, review not picked up yet · CI failed and review wants fixes, on a draft PR with a merge conflict · no PR · PR landed, this worktree is cleanup now.
 
 When you run several agents in parallel, the question you ask most is "which of these is actually finished?" — and answering it means tabbing through worktrees to run `gh pr checks`. This puts the answer in the row you were already looking at.
 
@@ -40,9 +41,10 @@ Requirements: herdr 0.7.5+, Python 3.8+, and [`gh`](https://cli.github.com) auth
 
 | Token | Meaning |
 |---|---|
-| `$status` | `$ci` then `$review`, fixed order, padded so the column never shifts |
+| `$status` | `$ci`, `$review`, `$merge`, fixed order, padded so the column never shifts |
 | `$ci` | `✓` pass · `●` running · `✗` fail |
 | `$review` | whatever your review-label config says; empty when unconfigured |
+| `$merge` | `✓` mergeable now · `○` needs a required approval · `✗` changes requested or conflicting · `↓` behind base · `■` blocked on something else, usually a required check |
 | `$pr` | `#7080`, or `[#7080]` for a draft |
 | `$branch` | current branch |
 | `$git` | `~2 ↑1` — dirty files, unpushed commits; absent when clean |
@@ -79,7 +81,7 @@ glyph = "○"
 
 ## How it works
 
-A poller asks `gh pr list` once per repo (not per worktree), fetches CI status for the branches you have checked out, derives the glyphs, and stamps them onto every space and agent pane with `herdr {workspace,pane} report-metadata --source ci-tokens`. Tokens carry a TTL longer than the poll interval, so they never blink out between passes.
+A poller asks `gh pr list` once per repo (not per worktree), fetches CI status and merge state for the branches you have checked out, derives the glyphs, and stamps them onto every space and agent pane with `herdr {workspace,pane} report-metadata --source ci-tokens`. Tokens carry a TTL longer than the poll interval, so they never blink out between passes.
 
 `worktree.created`, `workspace.created` and `pane.agent_detected` trigger an extra sweep, scoped to the workspace that fired the event and reading **only** from cache — so a new worktree lights up the moment it appears, in a fraction of a second, without spending a network call. The poll loop keeps sole ownership of fetching.
 
@@ -87,9 +89,11 @@ Three design decisions worth knowing, because all three are load-bearing:
 
 **A failed fetch is not an empty one.** The cache keeps the last good answer *and its timestamp* when the forge cannot be reached, so the next pass retries immediately rather than caching the failure. Without this, one flaky `gh` call blanks every row in the sidebar.
 
-**Check status is fetched per watched branch, not per open PR.** The PR *lists* cover the whole repo — scoping those would make a branch with no worktree today read as having no PR tomorrow — but a PR's check rollup is the expensive field, and it is only ever shown for a branch someone has open. Asking for the rollup across the whole open list makes `gh` send one GraphQL page covering every open PR; past ~50 PRs GitHub answers `504` instead, and the sidebar freezes on stale data for as long as the backlog stays that size. Fetching it per branch makes the cost track your worktree count rather than the repo's age. A rollup that fails leaves that one PR's CI glyph blank — never green — and is retried on the next pass.
+**Check status is fetched per watched branch, not per open PR.** The PR *lists* cover the whole repo — scoping those would make a branch with no worktree today read as having no PR tomorrow — but a PR's check rollup and merge state are the expensive fields, and it is only ever shown for a branch someone has open. Asking for either across the whole open list makes `gh` send one GraphQL page covering every open PR; past ~50 PRs GitHub answers `502`/`504` instead, and the sidebar freezes on stale data for as long as the backlog stays that size. Fetching it per branch makes the cost track your worktree count rather than the repo's age. A rollup that fails leaves that one PR's CI glyph blank — never green — and is retried on the next pass.
 
 **The cache holds facts, not glyphs.** Glyphs are re-derived every pass, so a CI transition shows up as soon as the data does, and a config edit lands on the very next sweep.
+
+**`$merge` is GitHub's answer, not ours.** `mergeStateStatus` already folds in every rule the branch enforces (required approvals, code-owner review, required checks), so a ruleset that demands a code owner's sign-off shows `○` until that person approves, whatever the review labels say. `BLOCKED` is split by `reviewDecision`, because waiting on a reviewer and waiting on a check are different people's move.
 
 CI status is worst-wins over an allow-list: `SUCCESS`, `NEUTRAL` and `SKIPPED` pass, an unconcluded check is pending, and *anything else* fails. An unrecognised conclusion reads red rather than silently green.
 
