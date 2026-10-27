@@ -11,7 +11,7 @@ Show PR, CI and review status for every worktree in your [herdr](https://github.
 ⋎      fix-grant-type               #7985
 ```
 
-Reading the columns (CI, review, merge): ready to merge · green and reviewed, but still waiting on a required approval · CI running, review not picked up yet · CI failed and review wants fixes, on a draft PR with a merge conflict · no PR · PR landed, this worktree is cleanup now.
+Reading the columns (conflict, CI, review, merge, then any `label_columns`): ready to merge · green and reviewed, but still waiting on a required approval · CI running, review not picked up yet · CI failed and review wants fixes, on a draft PR with a merge conflict · no PR · PR landed, this worktree is cleanup now.
 
 When you run several agents in parallel, the question you ask most is "which of these is actually finished?" — and answering it means tabbing through worktrees to run `gh pr checks`. This puts the answer in the row you were already looking at.
 
@@ -44,12 +44,12 @@ Requirements: herdr 0.7.5+, Python 3.8+, and [`gh`](https://cli.github.com) auth
 | `$status` | `$ci`, `$review`, `$merge`, fixed order, padded so the column never shifts |
 | `$ci` | `✓` pass · `●` running · `✗` fail |
 | `$review` | whatever your review-label config says; empty when unconfigured |
-| `$merge` | `✓` mergeable now · `○` needs a required approval · `✗` changes requested or conflicting · `↓` behind base · `■` blocked on something else, usually a required check |
+| `$merge` | `✓` mergeable now · `○` needs a required approval · `✗` changes requested · `↓` behind base · `■` blocked on something else, usually a required check |
 | `$pr` | `#7080`, or `[#7080]` for a draft |
 | `$branch` | current branch |
 | `$git` | `~2 ↑1` — dirty files, unpushed commits; absent when clean |
 | `$merged` | `⋎` the PR landed |
-| `$conflict` | `⚠` the branch actually conflicts |
+| `$conflict` | `≠` the branch actually conflicts; also the first `$status` column |
 
 Use them in `[ui.sidebar.spaces]` or `[ui.sidebar.agents]` rows, with the usual per-token `fg`, `bold` and `dim` styling. `$status` exists because a lone glyph cannot say which column it belongs to: it renders both, padding an absent one rather than dropping it, so position stays meaningful.
 

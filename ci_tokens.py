@@ -9,7 +9,7 @@ Tokens, on both spaces and agent panes:
     $branch    fix/careteam-knowledgebase-gap
     $git       ~2 ↑1   dirty files, unpushed commits; absent when clean
     $pr        #7080   draft PRs are bracketed: [#6110]
-    $status    ✓ ◐ ○   CI, review, merge, space-separated, padded — see NONE below
+    $status    ≠ ✓ ◐ ○ ◉   conflict, CI, review, merge, then any label_columns, padded — see NONE below
     $ci        ✓ pass  ● running  ✗ fail
     $review    whatever your review_labels config says; empty when unconfigured
     $merge     ✓ ready  ○ needs approval  ✗ changes requested  ↓ behind  ■ blocked
@@ -47,7 +47,8 @@ SOURCE = "ci-tokens"
 CACHE_VERSION = 5
 
 # Glyphs alone can't say which column they belong to, so $status holds both in
-# fixed order — CI, review, merge — and pads an absent one rather than dropping it.
+# fixed order — conflict, CI, review, merge, then label_columns, the same order
+# as herdr-pm's strip — and pads an absent one rather than dropping it.
 # Position is the label. The individual $ci/$review tokens stay available, but
 # they collapse when empty and shift everything left, which is exactly what
 # makes them unreadable as bare symbols.
@@ -59,9 +60,10 @@ CACHE_VERSION = 5
 NONE = "⠀"
 GAP = " "
 
-# Conflict reads as a failure here; the separate $conflict token says which kind.
+# Conflict has its own column ahead of CI, so it isn't repeated here.
 MERGE = {"ready": "✓", "review": "○", "changes": "✗", "behind": "↓",
-         "conflict": "✗", "blocked": "■"}
+         "conflict": "", "blocked": "■"}
+CONFLICT = "≠"
 
 # The PR landed: this worktree is now cleanup, not work in flight.
 MERGED = "⋎"
@@ -164,7 +166,18 @@ def load_config():
         "review_labels": [r for r in raw.get("review_labels", [])
                           if r.get("match") and r.get("glyph")],
         "review_gate": gate,
+        "label_columns": label_columns(raw.get("label_columns", [])),
     }
+
+
+def label_columns(rows):
+    """[[label_columns]] rows grouped by `column`, columns in first-seen order;
+    within a column the first matching row wins, like review_labels."""
+    cols = {}
+    for r in rows:
+        if r.get("column") and r.get("match") and r.get("glyph"):
+            cols.setdefault(r["column"], []).append(r)
+    return list(cols.values())
 
 
 def ci_glyph(checks):
@@ -223,17 +236,22 @@ def derive(data, cfg):
         ci = ci_glyph(pr.get("checks"))
         review = review_glyph(pr.get("labels"), rules, gate)
         merge = MERGE.get(pr.get("merge"), "")
+        conflict = CONFLICT if pr.get("conflicting") else ""
+        labels = set(pr.get("labels") or [])
+        extra = [next((r["glyph"] for r in col if r["match"] in labels), "")
+                 for col in cfg["label_columns"]]
         n = f"#{pr['number']}"
         # With no review config there is no review column, so no pad — a glyph
         # should not sit next to a blank cell forever.
-        cols = (ci, review, merge) if reviewing else (ci, merge)
+        cols = (conflict, ci, review, merge) if reviewing else (conflict, ci, merge)
+        cols += tuple(extra)
         out[pr["branch"]] = {
             "pr": f"[{n}]" if pr.get("draft") else n,
             "ci": ci,
             "review": review,
             "merge": merge,
             "status": GAP.join(g or NONE for g in cols),
-            "conflict": "⚠" if pr.get("conflicting") else "",
+            "conflict": conflict,
         }
     return out
 

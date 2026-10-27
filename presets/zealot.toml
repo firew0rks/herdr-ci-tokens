@@ -31,3 +31,20 @@ glyph = "✓"
 [review_gate]
 label = "zealot:reviewed"
 glyph = "○"
+
+# Extra columns after merge, in the order herdr-pm shows them. Rows sharing a
+# `column` make one column; the first match wins.
+[[label_columns]]
+column = "senior"
+match = "senior-approved"
+glyph = "◉"
+
+[[label_columns]]
+column = "qa"
+match = "qa:failed"
+glyph = "✗"
+
+[[label_columns]]
+column = "qa"
+match = "qa:validated"
+glyph = "●"
